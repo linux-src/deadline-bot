@@ -1,16 +1,115 @@
-"""Пошаговое создание временного изменения: /temp."""
+"""Пошаговое создание временного изменения: /temp.
+
+Навигация построена вокруг стека history в данных FSM: перед переходом
+на следующий шаг текущий шаг кладётся в стек, а кнопка «Назад» (wback)
+просто снимает верхний шаг со стека и перерисовывает его — так что
+неправильный выбор на любом шаге не требует переначинать мастер заново.
+"""
 from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, User
 
 import config
 from app import cards, db, keyboards, utils
 from app.states import Wizard
 
 router = Router(name="wizard")
+
+STEP_STATE = {
+    "type": Wizard.choosing_type,
+    "custom_type": Wizard.entering_custom_type,
+    "scope": Wizard.choosing_scope,
+    "bot_single": Wizard.choosing_bot_single,
+    "bots_multi": Wizard.choosing_bots_multi,
+    "description": Wizard.entering_description,
+    "deadline_mode": Wizard.choosing_deadline_mode,
+    "deadline_datetime": Wizard.entering_deadline_datetime,
+    "check_option": Wizard.choosing_check_option,
+    "check_datetime": Wizard.entering_check_datetime,
+    "responsible": Wizard.choosing_responsible,
+}
+
+
+async def _render(step: str, state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
+    data = await state.get_data()
+
+    if step == "type":
+        return "Что добавляем?", keyboards.kb_type()
+    if step == "custom_type":
+        return "Опиши коротко, что за тип изменения:", keyboards.only_back()
+    if step == "scope":
+        return "Где действует изменение?", keyboards.with_back(keyboards.kb_scope())
+    if step == "bot_single":
+        return "Выбери бота:", keyboards.with_back(keyboards.kb_bots_single())
+    if step == "bots_multi":
+        selected = set(data.get("bots_multi_selected", []))
+        return (
+            "Выбери ботов (можно несколько), потом нажми «Готово»:",
+            keyboards.with_back(keyboards.kb_bots_multi(selected)),
+        )
+    if step == "description":
+        return "Что именно изменили?\n\nНапример: «Баннер о повышенном курсе»", keyboards.only_back()
+    if step == "deadline_mode":
+        return "Когда это нужно убрать?", keyboards.with_back(keyboards.kb_deadline_mode())
+    if step == "deadline_datetime":
+        return (
+            "Укажи дату и время, когда убрать (например: 20:00, 12.09 20:00 или 12.09.2026 20:00):",
+            keyboards.only_back(),
+        )
+    if step == "check_option":
+        return (
+            "Когда нужно проверить, актуально ли изменение?",
+            keyboards.with_back(keyboards.kb_check_options()),
+        )
+    if step == "check_datetime":
+        return "Укажи дату и время проверки (например: 20:00, 12.09 20:00):", keyboards.only_back()
+    if step == "responsible":
+        employees = await db.list_employees()
+        if not employees:
+            return (
+                "Пока нет ни одного известного сотрудника. Попроси коллегу написать боту /start, "
+                "затем нажми «Назад» и попробуй снова.",
+                keyboards.only_back(),
+            )
+        return (
+            "Кто отвечает за контроль этого изменения?",
+            keyboards.with_back(keyboards.kb_responsible(employees)),
+        )
+    raise ValueError(f"неизвестный шаг мастера: {step}")
+
+
+async def _goto(step: str, state: FSMContext, send) -> None:
+    await state.set_state(STEP_STATE[step])
+    text, kb = await _render(step, state)
+    await send(text, reply_markup=kb)
+
+
+async def _advance(current_step: str, next_step: str, state: FSMContext, send) -> None:
+    data = await state.get_data()
+    history = data.get("history", [])
+    history.append(current_step)
+    await state.update_data(history=history)
+    await _goto(next_step, state, send)
+
+
+@router.callback_query(F.data == "wback")
+async def on_back(callback: CallbackQuery, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    if current_state is None or not current_state.startswith("Wizard:"):
+        await callback.answer()
+        return
+    data = await state.get_data()
+    history = data.get("history", [])
+    if not history:
+        await callback.answer("Это первый шаг")
+        return
+    prev_step = history.pop()
+    await state.update_data(history=history)
+    await callback.answer()
+    await _goto(prev_step, state, callback.message.edit_text)
 
 
 async def begin_wizard(message: Message, state: FSMContext, user: User) -> None:
@@ -19,9 +118,9 @@ async def begin_wizard(message: Message, state: FSMContext, user: User) -> None:
         creator_id=user.id,
         creator_username=user.username,
         creator_name=user.full_name,
+        history=[],
     )
-    await state.set_state(Wizard.choosing_type)
-    await message.answer("Что добавляем?", reply_markup=keyboards.kb_type())
+    await _goto("type", state, message.answer)
 
 
 @router.message(Command("temp"))
@@ -36,12 +135,10 @@ async def on_type(callback: CallbackQuery, state: FSMContext) -> None:
     change_type = callback.data.split(":", 1)[1]
     await callback.answer()
     if change_type == "Другое":
-        await state.set_state(Wizard.entering_custom_type)
-        await callback.message.edit_text("Опиши коротко, что за тип изменения:")
+        await _advance("type", "custom_type", state, callback.message.edit_text)
         return
     await state.update_data(change_type=change_type)
-    await state.set_state(Wizard.choosing_scope)
-    await callback.message.edit_text("Где действует изменение?", reply_markup=keyboards.kb_scope())
+    await _advance("type", "scope", state, callback.message.edit_text)
 
 
 @router.message(Wizard.entering_custom_type)
@@ -51,8 +148,7 @@ async def on_custom_type(message: Message, state: FSMContext) -> None:
         await message.answer("Напиши коротко, что за тип изменения текстом.")
         return
     await state.update_data(change_type=text)
-    await state.set_state(Wizard.choosing_scope)
-    await message.answer("Где действует изменение?", reply_markup=keyboards.kb_scope())
+    await _advance("custom_type", "scope", state, message.answer)
 
 
 # --------------------------------------------------------- шаг 2: где действует
@@ -63,18 +159,12 @@ async def on_scope(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if scope == "all":
         await state.update_data(bots=list(config.BOTS), all_bots=True)
-        await state.set_state(Wizard.entering_description)
-        await callback.message.edit_text("Что именно изменили?\n\nНапример: «Баннер о повышенном курсе»")
+        await _advance("scope", "description", state, callback.message.edit_text)
     elif scope == "one":
-        await state.set_state(Wizard.choosing_bot_single)
-        await callback.message.edit_text("Выбери бота:", reply_markup=keyboards.kb_bots_single())
+        await _advance("scope", "bot_single", state, callback.message.edit_text)
     else:
         await state.update_data(bots_multi_selected=[])
-        await state.set_state(Wizard.choosing_bots_multi)
-        await callback.message.edit_text(
-            "Выбери ботов (можно несколько), потом нажми «Готово»:",
-            reply_markup=keyboards.kb_bots_multi(set()),
-        )
+        await _advance("scope", "bots_multi", state, callback.message.edit_text)
 
 
 @router.callback_query(Wizard.choosing_bot_single, F.data.startswith("wbot:"))
@@ -82,8 +172,7 @@ async def on_bot_single(callback: CallbackQuery, state: FSMContext) -> None:
     code = callback.data.split(":", 1)[1]
     await callback.answer()
     await state.update_data(bots=[code], all_bots=False)
-    await state.set_state(Wizard.entering_description)
-    await callback.message.edit_text("Что именно изменили?\n\nНапример: «Баннер о повышенном курсе»")
+    await _advance("bot_single", "description", state, callback.message.edit_text)
 
 
 @router.callback_query(Wizard.choosing_bots_multi, F.data.startswith("wbotm:"))
@@ -94,7 +183,7 @@ async def on_bot_multi_toggle(callback: CallbackQuery, state: FSMContext) -> Non
     selected.symmetric_difference_update({code})
     await state.update_data(bots_multi_selected=list(selected))
     await callback.answer()
-    await callback.message.edit_reply_markup(reply_markup=keyboards.kb_bots_multi(selected))
+    await callback.message.edit_reply_markup(reply_markup=keyboards.with_back(keyboards.kb_bots_multi(selected)))
 
 
 @router.callback_query(Wizard.choosing_bots_multi, F.data == "wbots_done")
@@ -106,8 +195,7 @@ async def on_bots_multi_done(callback: CallbackQuery, state: FSMContext) -> None
         return
     await callback.answer()
     await state.update_data(bots=selected, all_bots=False)
-    await state.set_state(Wizard.entering_description)
-    await callback.message.edit_text("Что именно изменили?\n\nНапример: «Баннер о повышенном курсе»")
+    await _advance("bots_multi", "description", state, callback.message.edit_text)
 
 
 # ------------------------------------------------------------- шаг 3: описание
@@ -119,8 +207,7 @@ async def on_description(message: Message, state: FSMContext) -> None:
         await message.answer("Нужно текстовое описание. Что именно изменили?")
         return
     await state.update_data(description=text)
-    await state.set_state(Wizard.choosing_deadline_mode)
-    await message.answer("Когда это нужно убрать?", reply_markup=keyboards.kb_deadline_mode())
+    await _advance("description", "deadline_mode", state, message.answer)
 
 
 # ------------------------------------------------------------- срок действия
@@ -130,16 +217,9 @@ async def on_deadline_mode(callback: CallbackQuery, state: FSMContext) -> None:
     mode = callback.data.split(":", 1)[1]
     await callback.answer()
     if mode == "pick":
-        await state.set_state(Wizard.entering_deadline_datetime)
-        await callback.message.edit_text(
-            "Укажи дату и время, когда убрать (например: 20:00, 12.09 20:00 или 12.09.2026 20:00):"
-        )
+        await _advance("deadline_mode", "deadline_datetime", state, callback.message.edit_text)
     else:
-        await state.set_state(Wizard.choosing_check_option)
-        await callback.message.edit_text(
-            "Когда нужно проверить, актуально ли изменение?",
-            reply_markup=keyboards.kb_check_options(),
-        )
+        await _advance("deadline_mode", "check_option", state, callback.message.edit_text)
 
 
 @router.message(Wizard.entering_deadline_datetime)
@@ -149,7 +229,7 @@ async def on_deadline_datetime(message: Message, state: FSMContext) -> None:
         await message.answer("Не понял дату. Формат: 20:00, 12.09 20:00 или 12.09.2026 20:00")
         return
     await state.update_data(has_deadline=True, target_at=utils.to_iso(dt))
-    await _ask_responsible(message.answer, state)
+    await _advance("deadline_datetime", "responsible", state, message.answer)
 
 
 @router.callback_query(Wizard.choosing_check_option, F.data.startswith("wcheck:"))
@@ -157,14 +237,11 @@ async def on_check_option(callback: CallbackQuery, state: FSMContext) -> None:
     code = callback.data.split(":", 1)[1]
     await callback.answer()
     if code == "pick":
-        await state.set_state(Wizard.entering_check_datetime)
-        await callback.message.edit_text(
-            "Укажи дату и время проверки (например: 20:00, 12.09 20:00):"
-        )
+        await _advance("check_option", "check_datetime", state, callback.message.edit_text)
         return
     dt = utils.apply_check_quick_option(code)
     await state.update_data(has_deadline=False, target_at=utils.to_iso(dt))
-    await _ask_responsible(callback.message.edit_text, state)
+    await _advance("check_option", "responsible", state, callback.message.edit_text)
 
 
 @router.message(Wizard.entering_check_datetime)
@@ -174,17 +251,7 @@ async def on_check_datetime(message: Message, state: FSMContext) -> None:
         await message.answer("Не понял дату. Формат: 20:00, 12.09 20:00 или 12.09.2026 20:00")
         return
     await state.update_data(has_deadline=False, target_at=utils.to_iso(dt))
-    await _ask_responsible(message.answer, state)
-
-
-async def _ask_responsible(send, state: FSMContext) -> None:
-    await state.set_state(Wizard.choosing_responsible)
-    employees = await db.list_employees()
-    if not employees:
-        await send("Пока нет ни одного известного сотрудника. Попроси коллегу написать боту /start, затем повтори.")
-        await state.clear()
-        return
-    await send("Кто отвечает за контроль этого изменения?", reply_markup=keyboards.kb_responsible(employees))
+    await _advance("check_datetime", "responsible", state, message.answer)
 
 
 # ---------------------------------------------------------------- ответственный

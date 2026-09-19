@@ -7,6 +7,40 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config
 from app import utils
 
+# ------------------------------------------------------------- навигация
+
+def with_back(kb: InlineKeyboardMarkup, callback_data: str = "wback") -> InlineKeyboardMarkup:
+    """Добавляет строку с кнопкой «Назад» под уже готовой клавиатурой."""
+    b = InlineKeyboardBuilder()
+    for row in kb.inline_keyboard:
+        b.row(*row)
+    b.row(InlineKeyboardButton(text="◀️ Назад", callback_data=callback_data))
+    return b.as_markup()
+
+
+def only_back(callback_data: str = "wback") -> InlineKeyboardMarkup:
+    """Клавиатура для шагов со свободным вводом текста — там только «Назад»."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="◀️ Назад", callback_data=callback_data))
+    return b.as_markup()
+
+
+def only_cancel() -> InlineKeyboardMarkup:
+    """Для разовых всплывающих запросов текста (например, своя дата продления)."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss"))
+    return b.as_markup()
+
+
+def with_dismiss(kb: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+    """Добавляет «Отмена» — закрывает всплывающий экран, ни на что не влияя."""
+    b = InlineKeyboardBuilder()
+    for row in kb.inline_keyboard:
+        b.row(*row)
+    b.row(InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss"))
+    return b.as_markup()
+
+
 # --------------------------------------------------------------- шаг 1: тип
 
 def kb_type() -> InlineKeyboardMarkup:
@@ -102,7 +136,7 @@ def kb_extend_options(change_id: int) -> InlineKeyboardMarkup:
         b.button(text=label, callback_data=f"extend_opt:{change_id}:{code}")
     b.button(text="Выбрать дату и время", callback_data=f"extend_opt:{change_id}:pick")
     b.adjust(1)
-    return b.as_markup()
+    return with_dismiss(b.as_markup())
 
 
 def kb_done_multi(change_id: int) -> InlineKeyboardMarkup:
@@ -110,7 +144,7 @@ def kb_done_multi(change_id: int) -> InlineKeyboardMarkup:
     b.button(text="✅ Да, везде", callback_data=f"done_all:{change_id}")
     b.button(text="Выбрать боты", callback_data=f"done_pick:{change_id}")
     b.adjust(1)
-    return b.as_markup()
+    return with_dismiss(b.as_markup())
 
 
 def kb_done_pick(change_id: int, bots: list[str], bots_done: dict[str, bool]) -> InlineKeyboardMarkup:
@@ -120,7 +154,7 @@ def kb_done_pick(change_id: int, bots: list[str], bots_done: dict[str, bool]) ->
         b.button(text=f"{mark} {code}", callback_data=f"done_toggle:{change_id}:{code}")
     b.adjust(2)
     b.row(InlineKeyboardButton(text="Готово ▶️", callback_data=f"done_confirm:{change_id}"))
-    return b.as_markup()
+    return with_back(b.as_markup(), f"done_back:{change_id}")
 
 
 def kb_edit_deadline_mode(change_id: int) -> InlineKeyboardMarkup:
@@ -128,7 +162,7 @@ def kb_edit_deadline_mode(change_id: int) -> InlineKeyboardMarkup:
     b.button(text="Выбрать дату и время", callback_data=f"edeadline:{change_id}:pick")
     b.button(text="Нет точной даты", callback_data=f"edeadline:{change_id}:nodate")
     b.adjust(1)
-    return b.as_markup()
+    return with_back(b.as_markup(), f"editmenu:{change_id}")
 
 
 def kb_edit_check_options(change_id: int) -> InlineKeyboardMarkup:
@@ -137,7 +171,7 @@ def kb_edit_check_options(change_id: int) -> InlineKeyboardMarkup:
         b.button(text=label, callback_data=f"echeck:{change_id}:{code}")
     b.button(text="Выбрать дату и время", callback_data=f"echeck:{change_id}:pick")
     b.adjust(1)
-    return b.as_markup()
+    return with_back(b.as_markup(), f"edeadline:{change_id}:back")
 
 
 def kb_edit_responsible(change_id: int, employees) -> InlineKeyboardMarkup:
@@ -146,7 +180,7 @@ def kb_edit_responsible(change_id: int, employees) -> InlineKeyboardMarkup:
         name = utils.display_name(emp["username"], emp["full_name"])
         b.button(text=name, callback_data=f"eresp:{change_id}:{emp['tg_id']}")
     b.adjust(1)
-    return b.as_markup()
+    return with_back(b.as_markup(), f"editmenu:{change_id}")
 
 
 def kb_edit_menu(change_id: int) -> InlineKeyboardMarkup:
@@ -156,4 +190,4 @@ def kb_edit_menu(change_id: int) -> InlineKeyboardMarkup:
     b.button(text="Срок", callback_data=f"editf:{change_id}:deadline")
     b.button(text="Ответственный", callback_data=f"editf:{change_id}:resp")
     b.adjust(1)
-    return b.as_markup()
+    return with_dismiss(b.as_markup())
