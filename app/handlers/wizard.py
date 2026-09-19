@@ -81,10 +81,27 @@ async def _render(step: str, state: FSMContext) -> tuple[str, InlineKeyboardMark
     raise ValueError(f"неизвестный шаг мастера: {step}")
 
 
+async def _clear_stale_markup(state: FSMContext, bot) -> None:
+    """Гасит кнопки на предыдущем сообщении мастера, чтобы их нельзя было
+    случайно нажать после того, как разговор ушёл на следующий шаг —
+    именно так путали бота, тыкая в кнопки старой, уже неактуальной карточки."""
+    data = await state.get_data()
+    chat_id = data.get("last_chat_id")
+    message_id = data.get("last_message_id")
+    if not chat_id or not message_id:
+        return
+    try:
+        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
+    except Exception:
+        pass
+
+
 async def _goto(step: str, state: FSMContext, send) -> None:
     await state.set_state(STEP_STATE[step])
     text, kb = await _render(step, state)
-    await send(text, reply_markup=kb)
+    sent = await send(text, reply_markup=kb)
+    if sent is not None:
+        await state.update_data(last_chat_id=sent.chat.id, last_message_id=sent.message_id)
 
 
 async def _advance(current_step: str, next_step: str, state: FSMContext, send) -> None:
@@ -92,6 +109,7 @@ async def _advance(current_step: str, next_step: str, state: FSMContext, send) -
     history = data.get("history", [])
     history.append(current_step)
     await state.update_data(history=history)
+    await _clear_stale_markup(state, send.__self__.bot)
     await _goto(next_step, state, send)
 
 
@@ -113,6 +131,10 @@ async def on_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 async def begin_wizard(message: Message, state: FSMContext, user: User) -> None:
+    # если пользователь бросил предыдущую попытку /temp на середине — гасим
+    # кнопки на том старом сообщении, иначе в чате будет несколько
+    # прошлых "Что добавляем?" с рабочими на вид, но неактуальными кнопками
+    await _clear_stale_markup(state, message.bot)
     await state.clear()
     await state.update_data(
         creator_id=user.id,
