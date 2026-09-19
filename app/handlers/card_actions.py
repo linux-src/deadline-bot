@@ -16,6 +16,18 @@ def _parse(data: str) -> list[str]:
     return data.split(":")
 
 
+async def _blocked_in_group(callback: CallbackQuery, bot_username: str) -> bool:
+    """Проверяет, что для ввода текста мы в личке — иначе сообщение до бота
+    не дойдёт (privacy mode в группах). Возвращает True, если шаг заблокирован."""
+    if callback.message.chat.type == "private":
+        return False
+    await callback.answer(
+        f"Для ввода текста напиши мне в личку (@{bot_username}) — из группы сообщение до меня не дойдёт",
+        show_alert=True,
+    )
+    return True
+
+
 @router.callback_query(F.data == "dismiss")
 async def on_dismiss(callback: CallbackQuery, state: FSMContext) -> None:
     """Закрывает всплывающий экран (меню/подтверждение), не трогая карточку."""
@@ -153,10 +165,12 @@ async def _apply_extend(bot, change_id: int, new_dt) -> None:
 
 
 @router.callback_query(F.data.startswith("extend_opt:"))
-async def on_extend_opt(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_extend_opt(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
     _, change_id_s, code = _parse(callback.data)
     change_id = int(change_id_s)
     if code == "pick":
+        if await _blocked_in_group(callback, bot_username):
+            return
         await state.set_state(ExtendFlow.entering_custom_datetime)
         await state.update_data(change_id=change_id)
         await callback.answer()
@@ -202,17 +216,20 @@ async def on_edit_menu_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("editf:"))
-async def on_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_edit_field(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
     _, change_id_s, field = _parse(callback.data)
     change_id = int(change_id_s)
     change = await db.get_change(change_id)
-    await callback.answer()
 
     if field == "desc":
+        if await _blocked_in_group(callback, bot_username):
+            return
+        await callback.answer()
         await state.set_state(EditFlow.editing_description)
         await state.update_data(change_id=change_id)
         await callback.message.edit_text("Новое описание:", reply_markup=keyboards.only_back(f"editmenu:{change_id}"))
     elif field == "bots":
+        await callback.answer()
         await state.set_state(EditFlow.choosing_bots_multi)
         await state.update_data(change_id=change_id, selected=list(change["bots"]))
         await callback.message.edit_text(
@@ -220,10 +237,12 @@ async def on_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
             reply_markup=keyboards.with_back(keyboards.kb_bots_multi(set(change["bots"])), f"editmenu:{change_id}"),
         )
     elif field == "deadline":
+        await callback.answer()
         await callback.message.edit_text(
             "Когда это нужно убрать?", reply_markup=keyboards.kb_edit_deadline_mode(change_id)
         )
     elif field == "resp":
+        await callback.answer()
         employees = await db.list_employees()
         await callback.message.edit_text(
             "Кто отвечает за контроль этого изменения?",
@@ -232,11 +251,13 @@ async def on_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("edeadline:"))
-async def on_edit_deadline_mode(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_edit_deadline_mode(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
     _, change_id_s, mode = _parse(callback.data)
     change_id = int(change_id_s)
-    await callback.answer()
     if mode == "pick":
+        if await _blocked_in_group(callback, bot_username):
+            return
+        await callback.answer()
         await state.set_state(EditFlow.editing_datetime)
         await state.update_data(change_id=change_id, mode="deadline")
         await callback.message.edit_text(
@@ -244,10 +265,12 @@ async def on_edit_deadline_mode(callback: CallbackQuery, state: FSMContext) -> N
             reply_markup=keyboards.only_back(f"editmenu:{change_id}"),
         )
     elif mode == "back":
+        await callback.answer()
         await callback.message.edit_text(
             "Когда это нужно убрать?", reply_markup=keyboards.kb_edit_deadline_mode(change_id)
         )
     else:
+        await callback.answer()
         await callback.message.edit_text(
             "Когда нужно проверить, актуально ли изменение?",
             reply_markup=keyboards.kb_edit_check_options(change_id),
@@ -268,11 +291,13 @@ async def _apply_deadline_edit(bot, change_id: int, has_deadline: bool, new_dt) 
 
 
 @router.callback_query(F.data.startswith("echeck:"))
-async def on_edit_check_option(callback: CallbackQuery, state: FSMContext) -> None:
+async def on_edit_check_option(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
     _, change_id_s, code = _parse(callback.data)
     change_id = int(change_id_s)
-    await callback.answer()
     if code == "pick":
+        if await _blocked_in_group(callback, bot_username):
+            return
+        await callback.answer()
         await state.set_state(EditFlow.editing_datetime)
         await state.update_data(change_id=change_id, mode="check")
         await callback.message.edit_text(
@@ -280,6 +305,7 @@ async def on_edit_check_option(callback: CallbackQuery, state: FSMContext) -> No
             reply_markup=keyboards.only_back(f"editmenu:{change_id}"),
         )
         return
+    await callback.answer()
     dt = utils.apply_check_quick_option(code)
     await _apply_deadline_edit(callback.bot, change_id, has_deadline=False, new_dt=dt)
     await callback.message.edit_text("Срок обновлён ✅")

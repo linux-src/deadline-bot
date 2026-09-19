@@ -124,7 +124,16 @@ async def begin_wizard(message: Message, state: FSMContext, user: User) -> None:
 
 
 @router.message(Command("temp"))
-async def cmd_temp(message: Message, state: FSMContext) -> None:
+async def cmd_temp(message: Message, state: FSMContext, bot_username: str) -> None:
+    if message.chat.type != "private":
+        link = utils.dm_link(bot_username, "temp")
+        await message.answer(
+            "Создание временного изменения — через личный чат со мной: часть шагов "
+            "требует ввода текста, а из группы такие сообщения до меня не доходят "
+            "(так работает privacy mode).\n\n"
+            f"Напиши мне сюда: {link}"
+        )
+        return
     await begin_wizard(message, state, message.from_user)
 
 

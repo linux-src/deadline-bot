@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
 from app import db
-from app.handlers import card_actions, lists as lists_handlers, registration, wizard
+from app.handlers import card_actions, debug as debug_handlers, lists as lists_handlers, registration, wizard
 from app.middlewares import AutoRegisterMiddleware
 from app.scheduler import setup_scheduler
 
@@ -27,7 +27,10 @@ async def main() -> None:
     await db.init_db()
 
     bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
+    me = await bot.get_me()
+
     dp = Dispatcher(storage=MemoryStorage())
+    dp["bot_username"] = me.username
 
     dp.message.middleware(AutoRegisterMiddleware())
     dp.callback_query.middleware(AutoRegisterMiddleware())
@@ -36,6 +39,7 @@ async def main() -> None:
     dp.include_router(wizard.router)
     dp.include_router(card_actions.router)
     dp.include_router(lists_handlers.router)
+    dp.include_router(debug_handlers.router)
 
     setup_scheduler(bot)
 
