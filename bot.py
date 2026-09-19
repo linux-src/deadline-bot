@@ -27,10 +27,7 @@ async def main() -> None:
     await db.init_db()
 
     bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
-    me = await bot.get_me()
-
     dp = Dispatcher(storage=MemoryStorage())
-    dp["bot_username"] = me.username
 
     dp.message.middleware(AutoRegisterMiddleware())
     dp.callback_query.middleware(AutoRegisterMiddleware())

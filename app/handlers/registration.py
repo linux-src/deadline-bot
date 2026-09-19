@@ -27,27 +27,18 @@ def _start_keyboard() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject) -> None:
-    if command.args == "temp" and message.chat.type == "private":
+    if command.args == "temp":
         from app.handlers.wizard import begin_wizard  # локальный импорт, чтобы не плодить циклы
 
         await begin_wizard(message, state, message.from_user)
         return
-
-    if message.chat.type == "private":
-        await message.answer(WELCOME_TEXT, reply_markup=_start_keyboard())
-    else:
-        # в группе шаги мастера с вводом текста до бота не доходят (privacy mode),
-        # поэтому кнопку создания здесь вообще не показываем
-        await message.answer(WELCOME_TEXT)
+    await message.answer(WELCOME_TEXT, reply_markup=_start_keyboard())
 
 
 @router.callback_query(F.data == "start_temp")
 async def start_temp_button(callback: CallbackQuery, state: FSMContext) -> None:
     from app.handlers.wizard import begin_wizard  # локальный импорт, чтобы не плодить циклы
 
-    if callback.message.chat.type != "private":
-        await callback.answer("Открой личный чат со мной, там и создадим", show_alert=True)
-        return
     await callback.answer()
     await begin_wizard(callback.message, state, callback.from_user)
 

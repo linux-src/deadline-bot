@@ -139,10 +139,3 @@ def display_name(username: str | None, full_name: str | None) -> str:
     if username:
         return f"@{username}"
     return full_name or "неизвестно"
-
-
-def dm_link(bot_username: str, payload: str | None = None) -> str:
-    link = f"https://t.me/{bot_username}"
-    if payload:
-        link += f"?start={payload}"
-    return link

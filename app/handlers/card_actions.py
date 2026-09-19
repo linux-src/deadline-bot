@@ -16,18 +16,6 @@ def _parse(data: str) -> list[str]:
     return data.split(":")
 
 
-async def _blocked_in_group(callback: CallbackQuery, bot_username: str) -> bool:
-    """Проверяет, что для ввода текста мы в личке — иначе сообщение до бота
-    не дойдёт (privacy mode в группах). Возвращает True, если шаг заблокирован."""
-    if callback.message.chat.type == "private":
-        return False
-    await callback.answer(
-        f"Для ввода текста напиши мне в личку (@{bot_username}) — из группы сообщение до меня не дойдёт",
-        show_alert=True,
-    )
-    return True
-
-
 @router.callback_query(F.data == "dismiss")
 async def on_dismiss(callback: CallbackQuery, state: FSMContext) -> None:
     """Закрывает всплывающий экран (меню/подтверждение), не трогая карточку."""
@@ -165,12 +153,10 @@ async def _apply_extend(bot, change_id: int, new_dt) -> None:
 
 
 @router.callback_query(F.data.startswith("extend_opt:"))
-async def on_extend_opt(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
+async def on_extend_opt(callback: CallbackQuery, state: FSMContext) -> None:
     _, change_id_s, code = _parse(callback.data)
     change_id = int(change_id_s)
     if code == "pick":
-        if await _blocked_in_group(callback, bot_username):
-            return
         await state.set_state(ExtendFlow.entering_custom_datetime)
         await state.update_data(change_id=change_id)
         await callback.answer()
@@ -216,14 +202,12 @@ async def on_edit_menu_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("editf:"))
-async def on_edit_field(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
+async def on_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
     _, change_id_s, field = _parse(callback.data)
     change_id = int(change_id_s)
     change = await db.get_change(change_id)
 
     if field == "desc":
-        if await _blocked_in_group(callback, bot_username):
-            return
         await callback.answer()
         await state.set_state(EditFlow.editing_description)
         await state.update_data(change_id=change_id)
@@ -251,12 +235,10 @@ async def on_edit_field(callback: CallbackQuery, state: FSMContext, bot_username
 
 
 @router.callback_query(F.data.startswith("edeadline:"))
-async def on_edit_deadline_mode(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
+async def on_edit_deadline_mode(callback: CallbackQuery, state: FSMContext) -> None:
     _, change_id_s, mode = _parse(callback.data)
     change_id = int(change_id_s)
     if mode == "pick":
-        if await _blocked_in_group(callback, bot_username):
-            return
         await callback.answer()
         await state.set_state(EditFlow.editing_datetime)
         await state.update_data(change_id=change_id, mode="deadline")
@@ -291,12 +273,10 @@ async def _apply_deadline_edit(bot, change_id: int, has_deadline: bool, new_dt) 
 
 
 @router.callback_query(F.data.startswith("echeck:"))
-async def on_edit_check_option(callback: CallbackQuery, state: FSMContext, bot_username: str) -> None:
+async def on_edit_check_option(callback: CallbackQuery, state: FSMContext) -> None:
     _, change_id_s, code = _parse(callback.data)
     change_id = int(change_id_s)
     if code == "pick":
-        if await _blocked_in_group(callback, bot_username):
-            return
         await callback.answer()
         await state.set_state(EditFlow.editing_datetime)
         await state.update_data(change_id=change_id, mode="check")
