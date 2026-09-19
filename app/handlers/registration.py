@@ -1,0 +1,46 @@
+"""Служебные команды: /start, /help, /chatid."""
+from __future__ import annotations
+
+from aiogram import F, Router
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+
+router = Router(name="registration")
+
+
+def _start_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="➕ Новое временное изменение", callback_data="start_temp")]]
+    )
+
+
+@router.message(Command("start"))
+async def cmd_start(message: Message) -> None:
+    await message.answer(
+        "Привет! Я слежу за временными изменениями (баннеры, акции, загрузочные экраны и т.д.), "
+        "чтобы они не оставались висеть навсегда.\n\n"
+        "Команды:\n"
+        "/temp — создать новое временное изменение\n"
+        "/active — все активные изменения\n"
+        "/today — что нужно сделать сегодня\n\n"
+        "Ты уже добавлен в список сотрудников и можешь быть выбран ответственным.",
+        reply_markup=_start_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "start_temp")
+async def start_temp_button(callback: CallbackQuery, state: FSMContext) -> None:
+    from app.handlers.wizard import begin_wizard  # локальный импорт, чтобы не плодить циклы
+
+    await callback.answer()
+    await begin_wizard(callback.message, state, callback.from_user)
+
+
+@router.message(Command("chatid"))
+async def cmd_chatid(message: Message) -> None:
+    thread = getattr(message, "message_thread_id", None)
+    text = f"chat_id: {message.chat.id}"
+    if thread:
+        text += f"\nthread_id (topic): {thread}"
+    await message.answer(text)
